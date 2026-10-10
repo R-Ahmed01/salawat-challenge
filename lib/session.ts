@@ -2,7 +2,7 @@ import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypt
 import fs from 'node:fs';
 import path from 'node:path';
 import { cookies } from 'next/headers';
-import { getDb } from './db';
+import { dbGet } from './db';
 import { HttpError } from './errors';
 
 export const SESSION_COOKIE = 'salawat_session';
@@ -37,9 +37,9 @@ export async function getSession(): Promise<Session | null> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  const row = getDb()
-    .prepare('SELECT family_id, expires_at FROM sessions WHERE token_hash = ?')
-    .get(hashToken(token)) as SessionRecord | undefined;
+  const row = await dbGet<SessionRecord>('SELECT family_id, expires_at FROM sessions WHERE token_hash = ?', [
+    hashToken(token),
+  ]);
   if (!row) return null;
   if (row.expires_at < new Date().toISOString()) return null;
   return { familyId: row.family_id, token };
@@ -107,6 +107,14 @@ function openPlayer(sessionToken: string, sealed: string | undefined): string | 
 
 function getSecret(): string {
   if (secretCache) return secretCache;
+  const fromEnv = process.env.SESSION_SECRET?.trim();
+  if (fromEnv) {
+    secretCache = fromEnv;
+    return secretCache;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('SESSION_SECRET is required in production.');
+  }
   const dir = path.join(process.cwd(), 'data');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, '.secret');

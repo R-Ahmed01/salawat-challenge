@@ -5,7 +5,7 @@ import { clearAuthCookies, getSession } from '@/lib/session';
 
 export const POST = api(async () => {
   const session = await getSession();
-  if (session) logoutFamily(session.token);
+  if (session) await logoutFamily(session.token);
   await clearAuthCookies();
   return NextResponse.json({ ok: true });
 });

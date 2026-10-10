@@ -13,22 +13,13 @@ export function Landing({ loggedIn }: { loggedIn: boolean }) {
             Salawat <em>Challenge</em>
           </span>
         </Link>
-        <div className="nav-actions">
-          {loggedIn ? (
+        {loggedIn ? (
+          <div className="nav-actions">
             <Link className="btn btn-gold" href="/play">
               Continue
             </Link>
-          ) : (
-            <>
-              <Link className="btn btn-text" href="/login">
-                Log in
-              </Link>
-              <Link className="btn btn-gold" href="/signup">
-                Start a group
-              </Link>
-            </>
-          )}
-        </div>
+          </div>
+        ) : null}
       </header>
 
       <section className="hero">

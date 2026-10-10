@@ -18,7 +18,7 @@ export async function PATCH(request: Request, context: Context) {
       clearPin: body.clearPin === true,
     });
     const active = await readActiveMemberId(session.token);
-    return NextResponse.json(getMe(session.familyId, active));
+    return NextResponse.json(await getMe(session.familyId, active));
   } catch (error) {
     return fail(error);
   }
@@ -29,9 +29,9 @@ export async function DELETE(_request: Request, context: Context) {
     const session = await requireSession();
     const { id } = await context.params;
     const active = await readActiveMemberId(session.token);
-    deleteMember(session.familyId, id);
+    await deleteMember(session.familyId, id);
     if (active === id) await clearPlayerCookie();
-    return NextResponse.json(getMe(session.familyId, active === id ? null : active));
+    return NextResponse.json(await getMe(session.familyId, active === id ? null : active));
   } catch (error) {
     return fail(error);
   }

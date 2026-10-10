@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { addDays, todayInTimeZone } from './dates';
-import { getDb, withTx } from './db';
+import { dbAll, dbGet, dbRun, withTx } from './db';
 import { HttpError } from './errors';
 import { addSalawat, catchUpMember, type DayLog, type MemberState } from './game';
 import { hashSecret, verifySecret } from './password';
@@ -58,8 +58,7 @@ export async function createFamily(input: {
   password: string;
   timezone: string;
 }): Promise<string> {
-  const db = getDb();
-  const existing = db.prepare('SELECT id FROM families WHERE email = ?').get(input.email);
+  const existing = await dbGet('SELECT id FROM families WHERE email = ?', [input.email]);
   if (existing) throw new HttpError(409, 'That email already has a group. Log in instead.');
 
   const id = randomUUID();
@@ -68,16 +67,17 @@ export async function createFamily(input: {
   const now = new Date().toISOString();
 
   try {
-    withTx(() => {
-      db.prepare(
+    await withTx(async () => {
+      await dbRun(
         `INSERT INTO families (id, name, email, password_hash, timezone, daily_goal, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, input.name, input.email, passwordHash, input.timezone, DEFAULT_DAILY_GOAL, now);
-      db.prepare('INSERT INTO sessions (token_hash, family_id, expires_at) VALUES (?, ?, ?)').run(
+        [id, input.name, input.email, passwordHash, input.timezone, DEFAULT_DAILY_GOAL, now],
+      );
+      await dbRun('INSERT INTO sessions (token_hash, family_id, expires_at) VALUES (?, ?, ?)', [
         hashToken(token),
         id,
         expiresInDays(30),
-      );
+      ]);
     });
   } catch (error) {
     if (isUnique(error)) throw new HttpError(409, 'That email already has a group. Log in instead.');
@@ -88,33 +88,33 @@ export async function createFamily(input: {
 }
 
 export async function loginFamily(email: string, password: string): Promise<string | null> {
-  const db = getDb();
-  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(new Date().toISOString());
-  const family = db.prepare('SELECT id, password_hash FROM families WHERE email = ?').get(email) as
-    | { id: string; password_hash: string }
-    | undefined;
+  await dbRun('DELETE FROM sessions WHERE expires_at < ?', [new Date().toISOString()]);
+  const family = await dbGet<{ id: string; password_hash: string }>(
+    'SELECT id, password_hash FROM families WHERE email = ?',
+    [email],
+  );
   const hash = family?.password_hash ?? (await getDummyHash());
   const ok = await verifySecret(password, hash);
   if (!family || !ok) return null;
 
   const token = newSessionToken();
-  db.prepare('INSERT INTO sessions (token_hash, family_id, expires_at) VALUES (?, ?, ?)').run(
+  await dbRun('INSERT INTO sessions (token_hash, family_id, expires_at) VALUES (?, ?, ?)', [
     hashToken(token),
     family.id,
     expiresInDays(30),
-  );
+  ]);
   return token;
 }
 
-export function logoutFamily(token: string): void {
-  getDb().prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token));
+export async function logoutFamily(token: string): Promise<void> {
+  await dbRun('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
 }
 
-export function getMe(familyId: string, activeMemberId: string | null): MeResponse {
-  return withTx(() => {
-    const family = mustFamily(familyId);
+export async function getMe(familyId: string, activeMemberId: string | null): Promise<MeResponse> {
+  return withTx(async () => {
+    const family = await mustFamily(familyId);
     const today = todayInTimeZone(family.timezone);
-    for (const member of listMembers(familyId)) syncMember(member, today, family.daily_goal);
+    for (const member of await listMembers(familyId)) await syncMember(member, today, family.daily_goal);
     return readMe(familyId, activeMemberId, today);
   });
 }
@@ -124,33 +124,22 @@ export async function createMember(
   input: { name: string; color: MemberColor; pin: string | null },
 ): Promise<string> {
   const pinHash = input.pin ? await hashSecret(input.pin) : null;
-  return withTx(() => {
-    const family = mustFamily(familyId);
-    const members = listMembers(familyId);
+  return withTx(async () => {
+    const family = await mustFamily(familyId);
+    const members = await listMembers(familyId);
     if (members.length >= MEMBER_CAP) {
       throw new HttpError(400, 'This group already has 20 profiles.');
     }
     assertUniqueName(members, input.name);
     const today = todayInTimeZone(family.timezone);
     const id = randomUUID();
-    getDb()
-      .prepare(
-        `INSERT INTO members (
-          id, family_id, name, color, pin_hash, lives, streak, best_streak, life_progress,
-          streak_anchor, processed_through, started, total_salawat, pending_notice, created_on, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, 0, 0, NULL, ?, ?)`,
-      )
-      .run(
-        id,
-        familyId,
-        input.name,
-        input.color,
-        pinHash,
-        MAX_LIVES,
-        addDays(today, -1),
-        today,
-        new Date().toISOString(),
-      );
+    await dbRun(
+      `INSERT INTO members (
+        id, family_id, name, color, pin_hash, lives, streak, best_streak, life_progress,
+        streak_anchor, processed_through, started, total_salawat, pending_notice, created_on, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, 0, 0, NULL, ?, ?)`,
+      [id, familyId, input.name, input.color, pinHash, MAX_LIVES, addDays(today, -1), today, new Date().toISOString()],
+    );
     return id;
   });
 }
@@ -161,150 +150,166 @@ export async function updateMember(
   patch: { name?: string; color?: MemberColor; pin?: string | null; clearPin?: boolean },
 ): Promise<void> {
   const pinHash = patch.pin ? await hashSecret(patch.pin) : null;
-  withTx(() => {
-    const row = mustMember(familyId, memberId);
-    const members = listMembers(familyId);
+  await withTx(async () => {
+    const row = await mustMember(familyId, memberId);
+    const members = await listMembers(familyId);
     if (patch.name) assertUniqueName(members, patch.name, row.id);
     const name = patch.name ?? row.name;
     const color = patch.color ?? row.color;
     let nextPin = row.pin_hash;
     if (patch.pin) nextPin = pinHash;
     else if (patch.clearPin) nextPin = null;
-    getDb()
-      .prepare('UPDATE members SET name = ?, color = ?, pin_hash = ? WHERE id = ? AND family_id = ?')
-      .run(name, color, nextPin, memberId, familyId);
+    await dbRun('UPDATE members SET name = ?, color = ?, pin_hash = ? WHERE id = ? AND family_id = ?', [
+      name,
+      color,
+      nextPin,
+      memberId,
+      familyId,
+    ]);
   });
 }
 
-export function deleteMember(familyId: string, memberId: string): void {
-  const result = getDb()
-    .prepare('DELETE FROM members WHERE id = ? AND family_id = ?')
-    .run(memberId, familyId);
+export async function deleteMember(familyId: string, memberId: string): Promise<void> {
+  await withTx(async () => {
+    await dbRun('DELETE FROM days WHERE member_id = ?', [memberId]);
+    const result = await dbRun('DELETE FROM members WHERE id = ? AND family_id = ?', [memberId, familyId]);
+    if (result.changes === 0) throw new HttpError(404, 'That profile was not found.');
+  });
+}
+
+export async function dismissNotice(familyId: string, memberId: string): Promise<void> {
+  const result = await dbRun('UPDATE members SET pending_notice = NULL WHERE id = ? AND family_id = ?', [
+    memberId,
+    familyId,
+  ]);
   if (result.changes === 0) throw new HttpError(404, 'That profile was not found.');
 }
 
-export function dismissNotice(familyId: string, memberId: string): void {
-  const result = getDb()
-    .prepare('UPDATE members SET pending_notice = NULL WHERE id = ? AND family_id = ?')
-    .run(memberId, familyId);
-  if (result.changes === 0) throw new HttpError(404, 'That profile was not found.');
-}
-
-export function updateFamily(
+export async function updateFamily(
   familyId: string,
   patch: { name?: string; timezone?: string; dailyGoal?: number },
-): void {
-  withTx(() => {
-    const family = mustFamily(familyId);
+): Promise<void> {
+  await withTx(async () => {
+    const family = await mustFamily(familyId);
     const name = patch.name ?? family.name;
     const timezone = patch.timezone ?? family.timezone;
     const dailyGoal = patch.dailyGoal ?? family.daily_goal;
-    getDb()
-      .prepare('UPDATE families SET name = ?, timezone = ?, daily_goal = ? WHERE id = ?')
-      .run(name, timezone, dailyGoal, familyId);
+    await dbRun('UPDATE families SET name = ?, timezone = ?, daily_goal = ? WHERE id = ?', [
+      name,
+      timezone,
+      dailyGoal,
+      familyId,
+    ]);
 
     const today = todayInTimeZone(timezone);
     if (patch.dailyGoal && patch.dailyGoal !== family.daily_goal) {
-      getDb()
-        .prepare(
-          `UPDATE days SET goal = ?
-           WHERE completed = 0 AND date = ? AND member_id IN (SELECT id FROM members WHERE family_id = ?)`,
-        )
-        .run(patch.dailyGoal, today, familyId);
-      for (const member of listMembers(familyId)) {
-        const fresh = mustMember(familyId, member.id);
-        persistAdd(fresh, today, patch.dailyGoal, 0);
+      await dbRun(
+        `UPDATE days SET goal = ?
+         WHERE completed = 0 AND date = ? AND member_id IN (SELECT id FROM members WHERE family_id = ?)`,
+        [patch.dailyGoal, today, familyId],
+      );
+      for (const member of await listMembers(familyId)) {
+        const fresh = await mustMember(familyId, member.id);
+        await persistAdd(fresh, today, patch.dailyGoal, 0);
       }
     } else {
-      for (const member of listMembers(familyId)) syncMember(member, today, dailyGoal);
+      for (const member of await listMembers(familyId)) await syncMember(member, today, dailyGoal);
     }
   });
 }
 
 export async function changePassword(familyId: string, current: string, next: string): Promise<void> {
-  const family = mustFamily(familyId);
+  const family = await mustFamily(familyId);
   const ok = await verifySecret(current, family.password_hash);
   if (!ok) throw new HttpError(400, 'The current password does not match.');
   const passwordHash = await hashSecret(next);
-  getDb().prepare('UPDATE families SET password_hash = ? WHERE id = ?').run(passwordHash, familyId);
+  await dbRun('UPDATE families SET password_hash = ? WHERE id = ?', [passwordHash, familyId]);
 }
 
-export function memberInFamily(familyId: string, memberId: string): boolean {
-  return Boolean(getDb().prepare('SELECT id FROM members WHERE id = ? AND family_id = ?').get(memberId, familyId));
+export async function memberInFamily(familyId: string, memberId: string): Promise<boolean> {
+  const row = await dbGet('SELECT id FROM members WHERE id = ? AND family_id = ?', [memberId, familyId]);
+  return Boolean(row);
 }
 
-export function memberNeedsPin(familyId: string, memberId: string): boolean {
-  const row = mustMember(familyId, memberId);
+export async function memberNeedsPin(familyId: string, memberId: string): Promise<boolean> {
+  const row = await mustMember(familyId, memberId);
   return Boolean(row.pin_hash);
 }
 
 export async function pinMatches(familyId: string, memberId: string, pin: string): Promise<boolean> {
-  const row = mustMember(familyId, memberId);
+  const row = await mustMember(familyId, memberId);
   if (!row.pin_hash) return true;
   return verifySecret(pin, row.pin_hash);
 }
 
-export function addForMember(
+export async function addForMember(
   familyId: string,
   memberId: string,
   amount: number,
   opId?: string | null,
-): { me: MeResponse; justCompleted: boolean; lifeEarned: boolean } {
-  return withTx(() => {
-    const family = mustFamily(familyId);
+): Promise<{ me: MeResponse; justCompleted: boolean; lifeEarned: boolean }> {
+  return withTx(async () => {
+    const family = await mustFamily(familyId);
     const today = todayInTimeZone(family.timezone);
-    if (opId && getDb().prepare('SELECT id FROM play_ops WHERE id = ?').get(opId)) {
-      return { me: readMe(familyId, memberId, today), justCompleted: false, lifeEarned: false };
+    if (opId && (await dbGet('SELECT id FROM play_ops WHERE id = ?', [opId]))) {
+      return { me: await readMe(familyId, memberId, today), justCompleted: false, lifeEarned: false };
     }
-    const member = mustMember(familyId, memberId);
-    const result = persistAdd(member, today, family.daily_goal, amount);
+    const member = await mustMember(familyId, memberId);
+    const result = await persistAdd(member, today, family.daily_goal, amount);
     if (opId) {
-      getDb()
-        .prepare('INSERT INTO play_ops (id, family_id, member_id, amount, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(opId, familyId, memberId, amount, new Date().toISOString());
+      await dbRun('INSERT INTO play_ops (id, family_id, member_id, amount, created_at) VALUES (?, ?, ?, ?, ?)', [
+        opId,
+        familyId,
+        memberId,
+        amount,
+        new Date().toISOString(),
+      ]);
     }
-    for (const other of listMembers(familyId)) {
+    for (const other of await listMembers(familyId)) {
       if (other.id === memberId) continue;
-      syncMember(other, today, family.daily_goal);
+      await syncMember(other, today, family.daily_goal);
     }
     return {
-      me: readMe(familyId, memberId, today),
+      me: await readMe(familyId, memberId, today),
       justCompleted: result.justCompleted,
       lifeEarned: result.lifeEarned,
     };
   });
 }
 
-function persistAdd(row: MemberRow, today: string, goal: number, amount: number) {
-  const days = loadDays(row.id, row.processed_through ?? '0000-01-01', today);
+async function persistAdd(row: MemberRow, today: string, goal: number, amount: number) {
+  const days = await loadDays(row.id, row.processed_through ?? '0000-01-01', today);
   const result = addSalawat(toState(row), days, today, goal, amount);
   if (result.changed) {
-    saveState(row.id, result.state, result.notice ?? row.pending_notice);
-    writeDays(row.id, result.writes);
+    await saveState(row.id, result.state, result.notice ?? row.pending_notice);
+    await writeDays(row.id, result.writes);
   }
   return result;
 }
 
-function syncMember(row: MemberRow, today: string, goal: number): void {
-  const days = loadDays(row.id, row.processed_through ?? '0000-01-01', today);
+async function syncMember(row: MemberRow, today: string, goal: number): Promise<void> {
+  const days = await loadDays(row.id, row.processed_through ?? '0000-01-01', today);
   const result = catchUpMember(toState(row), days, today, goal);
   if (!result.changed) return;
-  saveState(row.id, result.state, result.notice ?? row.pending_notice);
-  writeDays(row.id, result.writes);
+  await saveState(row.id, result.state, result.notice ?? row.pending_notice);
+  await writeDays(row.id, result.writes);
 }
 
-function readMe(familyId: string, activeMemberId: string | null, today: string): MeResponse {
-  const family = mustFamily(familyId);
-  const members = listMembers(familyId);
-  const dayStmt = getDb().prepare('SELECT count, goal, completed FROM days WHERE member_id = ? AND date = ?');
+async function readMe(familyId: string, activeMemberId: string | null, today: string): Promise<MeResponse> {
+  const family = await mustFamily(familyId);
+  const members = await listMembers(familyId);
   const active = activeMemberId && members.some((member) => member.id === activeMemberId) ? activeMemberId : null;
 
-  const publicMembers: PublicMember[] = members.map((member) => {
-    const day = dayStmt.get(member.id, today) as DayRow | undefined;
+  const publicMembers: PublicMember[] = [];
+  for (const member of members) {
+    const day = await dbGet<DayRow>('SELECT count, goal, completed FROM days WHERE member_id = ? AND date = ?', [
+      member.id,
+      today,
+    ]);
     const todayGoal = day?.goal ?? family.daily_goal;
     const todayCount = day?.count ?? 0;
     const todayDone = Boolean(day && (day.completed === 1 || day.count >= day.goal));
-    return {
+    publicMembers.push({
       id: member.id,
       name: member.name,
       color: member.color as MemberColor,
@@ -318,8 +323,8 @@ function readMe(familyId: string, activeMemberId: string | null, today: string):
       todayGoal,
       todayDone,
       notice: member.pending_notice,
-    };
-  });
+    });
+  }
 
   const familyToday = publicMembers.reduce((sum, member) => sum + member.todayCount, 0);
   const familyTarget = publicMembers.reduce((sum, member) => sum + member.todayGoal, 0);
@@ -340,24 +345,24 @@ function readMe(familyId: string, activeMemberId: string | null, today: string):
   };
 }
 
-function listMembers(familyId: string): MemberRow[] {
-  return getDb()
-    .prepare('SELECT * FROM members WHERE family_id = ? ORDER BY created_at ASC, id ASC')
-    .all(familyId) as unknown as MemberRow[];
+function listMembers(familyId: string): Promise<MemberRow[]> {
+  return dbAll<MemberRow>('SELECT * FROM members WHERE family_id = ? ORDER BY created_at ASC, id ASC', [familyId]);
 }
 
-function mustFamily(familyId: string): FamilyRow {
-  const family = getDb().prepare('SELECT * FROM families WHERE id = ?').get(familyId) as FamilyRow | undefined;
-  if (!family) throw new HttpError(401, 'Please log in again.');
-  return family;
+function mustFamily(familyId: string): Promise<FamilyRow> {
+  return dbGet<FamilyRow>('SELECT * FROM families WHERE id = ?', [familyId]).then((family) => {
+    if (!family) throw new HttpError(401, 'Please log in again.');
+    return family;
+  });
 }
 
-function mustMember(familyId: string, memberId: string): MemberRow {
-  const member = getDb()
-    .prepare('SELECT * FROM members WHERE id = ? AND family_id = ?')
-    .get(memberId, familyId) as MemberRow | undefined;
-  if (!member) throw new HttpError(404, 'That profile was not found.');
-  return member;
+function mustMember(familyId: string, memberId: string): Promise<MemberRow> {
+  return dbGet<MemberRow>('SELECT * FROM members WHERE id = ? AND family_id = ?', [memberId, familyId]).then(
+    (member) => {
+      if (!member) throw new HttpError(404, 'That profile was not found.');
+      return member;
+    },
+  );
 }
 
 function assertUniqueName(members: MemberRow[], name: string, ignoreId?: string): void {
@@ -367,10 +372,11 @@ function assertUniqueName(members: MemberRow[], name: string, ignoreId?: string)
   if (taken) throw new HttpError(409, 'Someone in the group already uses that name.');
 }
 
-function loadDays(memberId: string, after: string, through: string): DayLog[] {
-  const rows = getDb()
-    .prepare('SELECT date, count, goal, completed FROM days WHERE member_id = ? AND date > ? AND date <= ?')
-    .all(memberId, after, through) as unknown as DayRow[];
+async function loadDays(memberId: string, after: string, through: string): Promise<DayLog[]> {
+  const rows = await dbAll<DayRow>(
+    'SELECT date, count, goal, completed FROM days WHERE member_id = ? AND date > ? AND date <= ?',
+    [memberId, after, through],
+  );
   return rows.map((row) => ({
     date: row.date,
     count: row.count,
@@ -379,15 +385,13 @@ function loadDays(memberId: string, after: string, through: string): DayLog[] {
   }));
 }
 
-function saveState(memberId: string, state: MemberState, notice: string | null): void {
-  getDb()
-    .prepare(
-      `UPDATE members SET
-        lives = ?, streak = ?, best_streak = ?, life_progress = ?, streak_anchor = ?,
-        processed_through = ?, started = ?, total_salawat = ?, pending_notice = ?
-       WHERE id = ?`,
-    )
-    .run(
+async function saveState(memberId: string, state: MemberState, notice: string | null): Promise<void> {
+  await dbRun(
+    `UPDATE members SET
+      lives = ?, streak = ?, best_streak = ?, life_progress = ?, streak_anchor = ?,
+      processed_through = ?, started = ?, total_salawat = ?, pending_notice = ?
+     WHERE id = ?`,
+    [
       state.lives,
       state.streak,
       state.bestStreak,
@@ -398,20 +402,21 @@ function saveState(memberId: string, state: MemberState, notice: string | null):
       state.totalSalawat,
       notice,
       memberId,
-    );
+    ],
+  );
 }
 
-function writeDays(memberId: string, days: DayLog[]): void {
-  const upsert = getDb().prepare(
-    `INSERT INTO days (member_id, date, count, goal, completed)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(member_id, date) DO UPDATE SET
-       count = excluded.count,
-       goal = excluded.goal,
-       completed = excluded.completed`,
-  );
+async function writeDays(memberId: string, days: DayLog[]): Promise<void> {
   for (const day of days) {
-    upsert.run(memberId, day.date, day.count, day.goal, day.completed ? 1 : 0);
+    await dbRun(
+      `INSERT INTO days (member_id, date, count, goal, completed)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(member_id, date) DO UPDATE SET
+         count = excluded.count,
+         goal = excluded.goal,
+         completed = excluded.completed`,
+      [memberId, day.date, day.count, day.goal, day.completed ? 1 : 0],
+    );
   }
 }
 

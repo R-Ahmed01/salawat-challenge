@@ -597,7 +597,6 @@ input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rg
 @media (max-width: 640px) {
   .sheet-back { align-items: flex-end; padding: 0; }
   .sheet { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-  .nav-actions .btn-text { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .floater, .shake, .ring-value { animation: none; transition: none; }

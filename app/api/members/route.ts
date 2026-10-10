@@ -15,5 +15,5 @@ export const POST = api(async (request) => {
 
   if (body.enter === true) await setPlayerCookie(session.token, memberId);
   const active = body.enter === true ? memberId : await readActiveMemberId(session.token);
-  return NextResponse.json(getMe(session.familyId, active));
+  return NextResponse.json(await getMe(session.familyId, active));
 });

@@ -27,9 +27,9 @@ export const PATCH = api(async (request) => {
     );
   }
   if (patch.name || patch.timezone || patch.dailyGoal != null) {
-    updateFamily(session.familyId, patch);
+    await updateFamily(session.familyId, patch);
   }
 
   const active = await readActiveMemberId(session.token);
-  return NextResponse.json(getMe(session.familyId, active));
+  return NextResponse.json(await getMe(session.familyId, active));
 });
