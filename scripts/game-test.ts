@@ -9,6 +9,7 @@ import {
   type MemberState,
 } from '../lib/game';
 import { overlay } from '../lib/offline';
+import { tasbihPlace } from '../lib/tasbih';
 import type { MeResponse } from '../lib/types';
 
 const goal = 10;
@@ -146,13 +147,24 @@ check('notices stay quiet when nothing happened', () => {
 
 check('offline taps sit on the last saved house', () => {
   const base: MeResponse = {
-    family: { id: 'f', name: 'House', email: 'a@b.c', timezone: 'UTC', dailyGoal: 10 },
+    family: {
+      id: 'f',
+      name: 'House',
+      email: 'a@b.c',
+      timezone: 'UTC',
+      dailyGoal: 10,
+      householdGoal: 10000,
+      householdCount: 8,
+      joinCode: 'ABCD2345',
+    },
+    phrases: [],
     members: [
       {
         id: 'm1',
         name: 'Yusuf',
         color: 'emerald',
         pinSet: false,
+        kids: false,
         lives: 3,
         streak: 0,
         bestStreak: 0,
@@ -160,6 +172,7 @@ check('offline taps sit on the last saved house', () => {
         totalSalawat: 8,
         todayCount: 8,
         todayGoal: 10,
+        personalGoal: null,
         todayDone: false,
         notice: null,
       },
@@ -181,7 +194,18 @@ check('offline taps sit on the last saved house', () => {
   assert.equal(view.members[0].totalSalawat, 10);
   assert.equal(view.members[0].todayDone, true);
   assert.equal(view.familyToday, 10);
+  assert.equal(view.family.householdCount, 10);
   assert.equal(view.allDone, true);
+});
+
+check('tasbih marks land on 33, 66, and 99', () => {
+  assert.equal(tasbihPlace(0).bead, null);
+  assert.equal(tasbihPlace(32).bead, null);
+  assert.equal(tasbihPlace(33).bead, 33);
+  assert.equal(tasbihPlace(66).bead, 66);
+  assert.equal(tasbihPlace(99).position, 99);
+  assert.equal(tasbihPlace(100).position, 1);
+  assert.equal(tasbihPlace(100).bead, null);
 });
 
 console.log('all game rules passed');

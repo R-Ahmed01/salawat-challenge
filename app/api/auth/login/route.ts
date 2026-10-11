@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { HttpError } from '@/lib/errors';
 import { api, readBody } from '@/lib/http';
 import { loginFamily } from '@/lib/repo';
-import { setSessionCookie } from '@/lib/session';
+import { isAppClient, setSessionCookie } from '@/lib/session';
 import { requireEmail } from '@/lib/validate';
 
 const attempts = new Map<string, { count: number; reset: number }>();
@@ -21,7 +21,7 @@ export const POST = api(async (request) => {
 
   attempts.delete(email);
   await setSessionCookie(token);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(isAppClient(request) ? { ok: true, token } : { ok: true });
 });
 
 function limited(email: string): boolean {

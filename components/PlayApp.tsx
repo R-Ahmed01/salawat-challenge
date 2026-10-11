@@ -9,12 +9,13 @@ import { FamilyRail } from './FamilyRail';
 import { House } from './House';
 import { type MemberDraft } from './MemberForm';
 import { clearLocalHouse, deleteOutbox, listOutbox, loadHouse, putOutbox, saveHouse } from './offline-store';
+import { MonthView } from './MonthView';
 import { PinPad } from './PinPad';
 import { Roster } from './Roster';
 import { Stage } from './Stage';
-import { StarMark } from './Icons';
+import { Together } from './Together';
 
-type Screen = 'roster' | 'pin' | 'play' | 'house';
+type Screen = 'roster' | 'pin' | 'play' | 'house' | 'together' | 'month';
 
 export function PlayApp() {
   const [data, setData] = useState<MeResponse | null>(null);
@@ -24,6 +25,7 @@ export function PlayApp() {
   const [pinError, setPinError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [dedication, setDedication] = useState('');
   const [undoCount, setUndoCount] = useState(0);
   const [offline, setOffline] = useState(false);
   const [waiting, setWaiting] = useState(0);
@@ -71,7 +73,13 @@ export function PlayApp() {
       }
       try {
         const next = await api<PlayResponse>('/api/play', {
-          body: { action: 'add', amount: item.amount, memberId: item.memberId, opId: item.id },
+          body: {
+            action: 'add',
+            amount: item.amount,
+            memberId: item.memberId,
+            opId: item.id,
+            dedication: item.dedication || undefined,
+          },
         });
         outboxRef.current = outboxRef.current.filter((op) => op.id !== item.id);
         await deleteOutbox(item.id);
@@ -218,6 +226,22 @@ export function PlayApp() {
     };
   }, [publishOffline, remember, scheduleFlush]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (offlineRef.current || outboxRef.current.length > 0 || pending.current > 0) return;
+      api<MeResponse>('/api/me')
+        .then((next) => {
+          if (outboxRef.current.length > 0 || pending.current > 0) return;
+          publishOffline(false);
+          remember(next);
+        })
+        .catch((caught) => {
+          if (isOfflineError(caught)) publishOffline(true);
+        });
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [publishOffline, remember]);
+
   function clearUndo() {
     undoStack.current = [];
     setUndoCount(0);
@@ -288,7 +312,13 @@ export function PlayApp() {
     const before = overlay(base, outboxRef.current, memberId).members.find((member) => member.id === memberId);
     const at = Math.max(Date.now(), tapClock.current + 1);
     tapClock.current = at;
-    const item: PendingTap = { id: crypto.randomUUID(), memberId, amount, at };
+    const item: PendingTap = {
+      id: crypto.randomUUID(),
+      memberId,
+      amount,
+      at,
+      dedication: dedication.trim() || null,
+    };
     outboxRef.current = [...outboxRef.current, item];
     const after = paint(base).members.find((member) => member.id === memberId);
     if (crossedGoal(before, after)) setBanner('Saved on this device. The streak updates when you reconnect.');
@@ -316,12 +346,14 @@ export function PlayApp() {
 
   async function createMember(draft: MemberDraft, enter: boolean) {
     const next = await api<MeResponse>('/api/members', {
-      body: {
-        name: draft.name,
-        color: draft.color,
-        pin: draft.pin || undefined,
-        enter,
-      },
+        body: {
+          name: draft.name,
+          color: draft.color,
+          pin: draft.pin || undefined,
+          dailyGoal: draft.dailyGoal ? Number(draft.dailyGoal) : null,
+          kids: draft.kids,
+          enter,
+        },
     });
     if (enter && next.activeMemberId) selectedRef.current = next.activeMemberId;
     remember(next);
@@ -355,7 +387,7 @@ export function PlayApp() {
   if (!data) {
     return (
       <div className="loading-screen">
-        <StarMark />
+        <img className="cover-mark" src="/mark.png" alt="" />
         {error ? (
           <p className="alert" role="alert">
             {error}
@@ -379,7 +411,7 @@ export function PlayApp() {
     <div className="play-screen">
       <header className="topbar">
         <a className="brand" href="/">
-          <StarMark />
+          <img className="brand-mark" src="/mark.png" alt="" />
           <span>
             <strong>{data.family.name}</strong>
             <small>Salawat Challenge</small>
@@ -389,6 +421,16 @@ export function PlayApp() {
           {screen === 'play' ? (
             <button type="button" className="btn btn-text" onClick={() => setScreen('roster')}>
               Profiles
+            </button>
+          ) : null}
+          {screen !== 'house' && screen !== 'month' && screen !== 'together' ? (
+            <button type="button" className="btn btn-text" onClick={() => setScreen('together')}>
+              Together
+            </button>
+          ) : null}
+          {screen !== 'month' && screen !== 'house' ? (
+            <button type="button" className="btn btn-text" onClick={() => setScreen('month')}>
+              Month
             </button>
           ) : null}
           {screen !== 'house' ? (
@@ -416,6 +458,20 @@ export function PlayApp() {
         <p className="alert" role="alert">
           {error}
         </p>
+      ) : null}
+
+      {screen === 'month' ? <MonthView data={data} onBack={() => setScreen(data.activeMemberId ? 'play' : 'roster')} /> : null}
+
+      {screen === 'together' ? (
+        <Together
+          data={data}
+          onOpen={(member) => {
+            openMember(member).catch((caught) => {
+              setError(caught instanceof Error ? caught.message : 'Could not open that profile.');
+            });
+          }}
+          onCount={() => setScreen('play')}
+        />
       ) : null}
 
       {screen === 'house' ? (
@@ -457,6 +513,11 @@ export function PlayApp() {
         <div className="play-layout">
           <Stage
             member={active}
+            householdCount={data.family.householdCount}
+            householdGoal={data.family.householdGoal}
+            phrases={data.phrases}
+            dedication={dedication}
+            onDedication={setDedication}
             banner={banner}
             canUndo={undoCount > 0}
             onAdd={(amount) => send(amount, true)}

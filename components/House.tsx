@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { GOAL_PRESETS, type MeResponse, type PublicMember } from '@/lib/types';
+import { formatJoinCode, GOAL_PRESETS, HOUSEHOLD_PRESETS, type MeResponse, type PublicMember } from '@/lib/types';
 import { ApiError, api } from './client-api';
 import { Avatar } from './Icons';
 import { MemberForm, type MemberDraft } from './MemberForm';
@@ -25,6 +25,10 @@ export function House({
   const [editing, setEditing] = useState<PublicMember | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [goal, setGoal] = useState(String(data.family.dailyGoal));
+  const [household, setHousehold] = useState(String(data.family.householdGoal));
+  const [phraseLabel, setPhraseLabel] = useState('');
+  const [phraseArabic, setPhraseArabic] = useState('');
+  const [phraseLatin, setPhraseLatin] = useState('');
   const [name, setName] = useState(data.family.name);
   const [timezone, setTimezone] = useState(data.family.timezone);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -36,9 +40,10 @@ export function House({
 
   useEffect(() => {
     setGoal(String(data.family.dailyGoal));
+    setHousehold(String(data.family.householdGoal));
     setName(data.family.name);
     setTimezone(data.family.timezone);
-  }, [data.family.dailyGoal, data.family.name, data.family.timezone]);
+  }, [data.family.dailyGoal, data.family.householdGoal, data.family.name, data.family.timezone]);
 
   async function save(body: unknown, success: string): Promise<boolean> {
     setSaving(true);
@@ -92,9 +97,66 @@ export function House({
       {message ? <p className="notice-line">{message}</p> : null}
 
       <div className="panel house-block">
+        <h2>Other phones</h2>
+        <p className="quiet">
+          On another phone, choose Join with a code and enter this. Each person still picks their own profile. Every tap
+          moves the household total.
+        </p>
+        <p className="join-code">{formatJoinCode(data.family.joinCode)}</p>
+      </div>
+
+      <div className="panel house-block">
+        <h2>Household total</h2>
+        <p className="quiet">
+          {data.family.householdCount.toLocaleString()} of {data.family.householdGoal.toLocaleString()}. Every phone in
+          this group moves this same number.
+        </p>
+        <div className="presets">
+          {HOUSEHOLD_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              className={data.family.householdGoal === preset ? 'preset on' : 'preset'}
+              disabled={saving}
+              onClick={() => save({ householdGoal: preset }, `The household total is ${preset.toLocaleString()}.`)}
+            >
+              {preset.toLocaleString()}
+            </button>
+          ))}
+        </div>
+        <form
+          className="inline-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save({ householdGoal: Number(household) }, `The household total is ${Number(household).toLocaleString()}.`);
+          }}
+        >
+          <label className="field">
+            <span>Custom total</span>
+            <input
+              inputMode="numeric"
+              value={household}
+              onChange={(event) => setHousehold(event.target.value.replace(/\D/g, '').slice(0, 7))}
+            />
+          </label>
+          <button type="submit" className="btn btn-ghost" disabled={saving}>
+            Save total
+          </button>
+        </form>
+        <button
+          type="button"
+          className="btn btn-text"
+          disabled={saving}
+          onClick={() => save({ resetHousehold: true }, 'The household total starts again.')}
+        >
+          Start the total again
+        </button>
+      </div>
+
+      <div className="panel house-block">
         <h2>Daily goal</h2>
         <p className="quiet">
-          Everyone shares this number. Raising it will not take away a goal someone already finished today.
+          This is the goal for anyone without their own number. A child can aim for 33 while someone else aims for 300.
         </p>
         <div className="presets">
           {GOAL_PRESETS.map((preset) => (
@@ -144,9 +206,9 @@ export function House({
               <span>
                 <strong className="person-name">{member.name}</strong>
                 <span className="quiet">
-                  {member.pinSet ? 'PIN on' : 'No PIN'} ·{' '}
-                  {member.streak === 0 ? 'No streak yet' : `${member.streak}-day streak`} ·{' '}
-                  {member.totalSalawat.toLocaleString()} in all
+                  {member.personalGoal ?? data.family.dailyGoal} a day
+                  {member.kids ? ' · kids screen' : ''}
+                  {member.pinSet ? ' · PIN on' : ''}
                 </span>
               </span>
               <button type="button" className="btn btn-text" onClick={() => setEditing(member)}>
@@ -156,6 +218,77 @@ export function House({
           ))}
         </ul>
         {data.members.length === 0 ? <p className="quiet">No profiles yet.</p> : null}
+      </div>
+
+      <div className="panel house-block">
+        <h2>Your salawat</h2>
+        <p className="quiet">The short and longer phrases are already there. Add another the group recites.</p>
+        <ul className="calm-list">
+          {data.phrases.map((phrase) => (
+            <li key={phrase.id}>
+              <span>
+                <strong className="person-name">{phrase.label}</strong>
+                <span className="quiet" lang="ar" dir="rtl">
+                  {phrase.arabic}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-text"
+                onClick={() => {
+                  void api<MeResponse>(`/api/phrases/${phrase.id}`, { method: 'DELETE' })
+                    .then(onChange)
+                    .catch((caught) => {
+                      setError(caught instanceof ApiError ? caught.message : 'Could not remove that salawat.');
+                    });
+                }}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="form">
+          <label className="field">
+            <span>Name</span>
+            <input value={phraseLabel} onChange={(event) => setPhraseLabel(event.target.value)} maxLength={24} />
+          </label>
+          <label className="field">
+            <span>Arabic</span>
+            <input value={phraseArabic} onChange={(event) => setPhraseArabic(event.target.value)} lang="ar" dir="rtl" />
+          </label>
+          <label className="field">
+            <span>Transliteration</span>
+            <input value={phraseLatin} onChange={(event) => setPhraseLatin(event.target.value)} />
+          </label>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={saving}
+            onClick={() => {
+              void (async () => {
+                setSaving(true);
+                setError(null);
+                try {
+                  const next = await api<MeResponse>('/api/phrases', {
+                    body: { label: phraseLabel, arabic: phraseArabic, latin: phraseLatin },
+                  });
+                  onChange(next);
+                  setPhraseLabel('');
+                  setPhraseArabic('');
+                  setPhraseLatin('');
+                  setMessage('Salawat added.');
+                } catch (caught) {
+                  setError(caught instanceof ApiError ? caught.message : 'Could not add that salawat.');
+                } finally {
+                  setSaving(false);
+                }
+              })();
+            }}
+          >
+            Add salawat
+          </button>
+        </div>
       </div>
 
       <div className="panel house-block">
@@ -280,7 +413,13 @@ export function House({
           }}
         >
           <MemberForm
-            initial={{ name: editing.name, color: editing.color, pinSet: editing.pinSet }}
+            initial={{
+              name: editing.name,
+              color: editing.color,
+              pinSet: editing.pinSet,
+              personalGoal: editing.personalGoal,
+              kids: editing.kids,
+            }}
             allowClearPin
             submitLabel="Save profile"
             onCancel={() => setEditing(null)}
@@ -290,6 +429,8 @@ export function House({
                 body: {
                   name: draft.name,
                   color: draft.color,
+                  dailyGoal: draft.dailyGoal ? Number(draft.dailyGoal) : null,
+                  kids: draft.kids,
                   ...(draft.pin ? { pin: draft.pin } : {}),
                   ...(draft.clearPin ? { clearPin: true } : {}),
                 },

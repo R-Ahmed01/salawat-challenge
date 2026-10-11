@@ -1,12 +1,11 @@
 import Link from 'next/link';
-import { StarMark } from '@/components/Icons';
 
 export const dynamic = 'force-static';
 
 export default function OfflinePage() {
   return (
     <main className="auth-screen">
-      <StarMark />
+      <img className="cover-mark" src="/mark.png" alt="" />
       <section className="panel auth-card">
         <p className="kicker">Offline</p>
         <h1>The group is out of reach.</h1>

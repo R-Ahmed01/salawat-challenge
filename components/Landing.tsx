@@ -1,6 +1,4 @@
 import Link from 'next/link';
-import { Flame, Lamps, StarMark } from './Icons';
-import { Ring } from './Ring';
 import { RulesList } from './Rules';
 
 export function Landing({ loggedIn }: { loggedIn: boolean }) {
@@ -8,7 +6,7 @@ export function Landing({ loggedIn }: { loggedIn: boolean }) {
     <div className="page">
       <header className="nav">
         <Link href="/" className="brand">
-          <StarMark />
+          <img className="brand-mark" src="/mark.png" alt="" />
           <span>
             Salawat <em>Challenge</em>
           </span>
@@ -55,32 +53,14 @@ export function Landing({ loggedIn }: { loggedIn: boolean }) {
           </div>
         </div>
 
-        <aside className="panel mock" aria-hidden="true">
-          <div className="mock-top">
-            <div>
-              <p className="person-name">Hana</p>
-              <p className="meta">
-                <Flame /> 6 day streak
-              </p>
-            </div>
-            <Lamps lives={3} />
-          </div>
-          <div className="dial mock-dial">
-            <Ring value={72} goal={100} />
-            <div className="dial-label">
-              <strong>72</strong>
-              <span>/ 100</span>
-            </div>
-          </div>
-          <p className="phrase" lang="ar" dir="rtl">
+        <aside className="cover-plate">
+          <img className="cover-mark" src="/mark.png" alt="" />
+          <p className="cover-name">
+            Salawat <em>Challenge</em>
+          </p>
+          <p className="cover-line" lang="ar" dir="rtl">
             اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ
           </p>
-          <p className="latin">Allahumma salli &apos;ala Muhammad</p>
-          <div className="mock-family">
-            <MockRow name="Hana" count={72} done={false} />
-            <MockRow name="Yusuf" count={40} done={false} />
-            <MockRow name="Ibrahim" count={100} done />
-          </div>
         </aside>
       </section>
 
@@ -93,21 +73,9 @@ export function Landing({ loggedIn }: { loggedIn: boolean }) {
       </section>
 
       <footer className="site-footer">
-        <StarMark />
+        <img className="brand-mark" src="/mark.png" alt="" />
         <p>Made for people who want salawat to be something they come back to together.</p>
       </footer>
-    </div>
-  );
-}
-
-function MockRow({ name, count, done }: { name: string; count: number; done: boolean }) {
-  return (
-    <div className="mock-row">
-      <span>{name}</span>
-      <span className="bar">
-        <span style={{ width: `${count}%` }} />
-      </span>
-      <span>{done ? 'Done' : count}</span>
     </div>
   );
 }

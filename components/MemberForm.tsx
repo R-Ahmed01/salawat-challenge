@@ -1,13 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { MEMBER_COLORS, type MemberColor } from '@/lib/types';
+import { GOAL_PRESETS, MEMBER_COLORS, type MemberColor } from '@/lib/types';
 
 export type MemberDraft = {
   name: string;
   color: MemberColor;
   pin: string;
   clearPin: boolean;
+  dailyGoal: string;
+  kids: boolean;
 };
 
 export function MemberForm({
@@ -17,7 +19,7 @@ export function MemberForm({
   onSubmit,
   onCancel,
 }: {
-  initial?: { name: string; color: MemberColor; pinSet: boolean };
+  initial?: { name: string; color: MemberColor; pinSet: boolean; personalGoal: number | null; kids: boolean };
   submitLabel: string;
   allowClearPin?: boolean;
   onSubmit: (draft: MemberDraft) => Promise<void>;
@@ -27,6 +29,8 @@ export function MemberForm({
   const [color, setColor] = useState<MemberColor>(initial?.color ?? 'emerald');
   const [pin, setPin] = useState('');
   const [clearPin, setClearPin] = useState(false);
+  const [dailyGoal, setDailyGoal] = useState(initial?.personalGoal ? String(initial.personalGoal) : '');
+  const [kids, setKids] = useState(initial?.kids ?? false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -39,7 +43,7 @@ export function MemberForm({
     setSaving(true);
     setError(null);
     try {
-      await onSubmit({ name, color, pin, clearPin });
+      await onSubmit({ name, color, pin, clearPin, dailyGoal, kids });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not save that profile.');
       setSaving(false);
@@ -91,6 +95,34 @@ export function MemberForm({
         />
       </label>
       <p className="quiet">A PIN keeps other people on this login from counting on this profile.</p>
+      <div className="field">
+        <span>Personal goal</span>
+        <div className="presets">
+          <button type="button" className={dailyGoal === '' ? 'preset on' : 'preset'} onClick={() => setDailyGoal('')}>
+            Group
+          </button>
+          {GOAL_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              className={dailyGoal === String(preset) ? 'preset on' : 'preset'}
+              onClick={() => setDailyGoal(String(preset))}
+            >
+              {preset}
+            </button>
+          ))}
+        </div>
+        <input
+          inputMode="numeric"
+          value={dailyGoal}
+          onChange={(event) => setDailyGoal(event.target.value.replace(/\D/g, '').slice(0, 4))}
+          placeholder="Or the group goal"
+        />
+      </div>
+      <label className="check">
+        <input type="checkbox" checked={kids} onChange={(event) => setKids(event.target.checked)} />
+        <span>Kids screen, with a large tap</span>
+      </label>
       {allowClearPin && initial?.pinSet ? (
         <label className="check">
           <input

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { fail, readBody } from '@/lib/http';
 import { deleteMember, getMe, updateMember } from '@/lib/repo';
 import { clearPlayerCookie, readActiveMemberId, requireSession } from '@/lib/session';
-import { optionalPin, requireColor, requirePersonName } from '@/lib/validate';
+import { optionalMemberGoal, optionalPin, requireColor, requirePersonName } from '@/lib/validate';
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -16,6 +16,8 @@ export async function PATCH(request: Request, context: Context) {
       color: 'color' in body ? requireColor(body.color) : undefined,
       pin: 'pin' in body ? optionalPin(body.pin) : undefined,
       clearPin: body.clearPin === true,
+      dailyGoal: 'dailyGoal' in body ? optionalMemberGoal(body.dailyGoal) : undefined,
+      kids: 'kids' in body ? body.kids === true : undefined,
     });
     const active = await readActiveMemberId(session.token);
     return NextResponse.json(await getMe(session.familyId, active));
