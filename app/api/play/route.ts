@@ -2,8 +2,15 @@ import { NextResponse } from 'next/server';
 import { HttpError } from '@/lib/errors';
 import { api, readBody } from '@/lib/http';
 import { addForMember, dismissNotice, getMe, memberInFamily, memberNeedsPin, pinMatches } from '@/lib/repo';
-import { clearPlayerCookie, readActiveMemberId, requireSession, setPlayerCookie } from '@/lib/session';
-import { optionalOpId, optionalPin, requireAmount } from '@/lib/validate';
+import {
+  clearPlayerCookie,
+  isAppClient,
+  issuePlayerToken,
+  readActiveMemberId,
+  requireSession,
+  setPlayerCookie,
+} from '@/lib/session';
+import { optionalDedication, optionalOpId, optionalPin, requireAmount } from '@/lib/validate';
 
 export const POST = api(async (request) => {
   const session = await requireSession();
@@ -23,12 +30,16 @@ export const POST = api(async (request) => {
       }
     }
     await setPlayerCookie(session.token, memberId);
-    return NextResponse.json(await getMe(session.familyId, memberId));
+    const me = await getMe(session.familyId, memberId);
+    if (!isAppClient(request)) return NextResponse.json(me);
+    return NextResponse.json({ ...me, playerToken: issuePlayerToken(session.token, memberId) });
   }
 
   if (action === 'switch') {
     await clearPlayerCookie();
-    return NextResponse.json(await getMe(session.familyId, null));
+    const me = await getMe(session.familyId, null);
+    if (!isAppClient(request)) return NextResponse.json(me);
+    return NextResponse.json({ ...me, playerToken: null });
   }
 
   if (action === 'dismiss') {
@@ -48,7 +59,13 @@ export const POST = api(async (request) => {
     if ((await memberNeedsPin(session.familyId, active)) && active !== cookieMember) {
       throw new HttpError(401, 'Enter the PIN for this profile.', { pinRequired: true });
     }
-    const result = await addForMember(session.familyId, active, requireAmount(body.amount), optionalOpId(body.opId));
+    const result = await addForMember(
+      session.familyId,
+      active,
+      requireAmount(body.amount),
+      optionalOpId(body.opId),
+      optionalDedication(body.dedication),
+    );
     return NextResponse.json({
       ...result.me,
       justCompleted: result.justCompleted,

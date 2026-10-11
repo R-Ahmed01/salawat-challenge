@@ -5,6 +5,7 @@ export type PendingTap = {
   memberId: string;
   amount: number;
   at: number;
+  dedication?: string | null;
 };
 
 export function overlay(base: MeResponse, pending: PendingTap[], selectedId: string | null): MeResponse {
@@ -32,6 +33,10 @@ export function overlay(base: MeResponse, pending: PendingTap[], selectedId: str
 
   return {
     ...base,
+    family: {
+      ...base.family,
+      householdCount: Math.max(0, (base.family.householdCount ?? 0) + familyDelta),
+    },
     members,
     activeMemberId,
     familyToday: base.familyToday + familyDelta,

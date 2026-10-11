@@ -1,12 +1,14 @@
 import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { dbGet } from './db';
 import { HttpError } from './errors';
 
 export const SESSION_COOKIE = 'salawat_session';
 export const PLAYER_COOKIE = 'salawat_player';
+export const APP_CLIENT_HEADER = 'x-salawat-client';
+export const PLAYER_HEADER = 'x-salawat-player';
 
 const COOKIE_BASE = {
   httpOnly: true,
@@ -33,9 +35,19 @@ export async function requireSession(): Promise<Session> {
   return session;
 }
 
+export function isAppClient(request: Request): boolean {
+  return request.headers.get(APP_CLIENT_HEADER) === 'app';
+}
+
+export function issuePlayerToken(sessionToken: string, memberId: string): string {
+  return sealPlayer(sessionToken, memberId);
+}
+
 export async function getSession(): Promise<Session | null> {
+  const headerStore = await headers();
+  const authorization = headerStore.get('authorization');
   const jar = await cookies();
-  const token = jar.get(SESSION_COOKIE)?.value;
+  const token = authorization != null ? readBearer(authorization) : (jar.get(SESSION_COOKIE)?.value ?? null);
   if (!token) return null;
   const row = await dbGet<SessionRecord>('SELECT family_id, expires_at FROM sessions WHERE token_hash = ?', [
     hashToken(token),
@@ -70,8 +82,16 @@ export async function clearAuthCookies(): Promise<void> {
 }
 
 export async function readActiveMemberId(token: string): Promise<string | null> {
+  const headerStore = await headers();
+  const fromApp = headerStore.get(PLAYER_HEADER);
   const jar = await cookies();
-  return openPlayer(token, jar.get(PLAYER_COOKIE)?.value);
+  const sealed = fromApp != null ? fromApp : jar.get(PLAYER_COOKIE)?.value;
+  return openPlayer(token, sealed || undefined);
+}
+
+function readBearer(authorization: string): string | null {
+  const match = /^Bearer\s+([a-f0-9]{32,128})$/i.exec(authorization.trim());
+  return match?.[1] ?? null;
 }
 
 export function newSessionToken(): string {
